@@ -7,7 +7,7 @@ on:
 env:
   REGISTRY: ${{ secrets.ACR_LOGIN_SERVER }}   # e.g. myacr.azurecr.io
   IMAGE_NAME: sit722-app
-  IMAGE_TAG: ${{ github.sha }}
+  IMAGE_TAG: ${{ github.sha }} 
   IMAGE: ${{ secrets.ACR_LOGIN_SERVER }}/sit722-app:${{ github.sha }}
   PORT: 8080          
   PATH_CHECK: /health 
