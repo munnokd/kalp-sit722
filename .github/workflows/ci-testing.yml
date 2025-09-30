@@ -43,6 +43,13 @@ jobs:
           load: true   # load to local Docker for smoke test
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Smoke test container
+        shell: bash
+        env:
+          IMAGE: ${{ env.IMAGE }}
+          PORT: ${{ env.PORT }}
+          PATH_CHECK: ${{ env.PATH_CHECK }}
+        run: bash .ci/smoke-test.sh
 
 
       - name: Push image to ACR (only if tests passed)
