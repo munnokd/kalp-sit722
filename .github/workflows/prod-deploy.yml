@@ -26,7 +26,7 @@ jobs:
       
           az container create \
             --resource-group sit722-prod-rg \
-            --name sit72prodapp \
+            --name sit722acr945746056  \
             --image ${{ secrets.ACR_LOGIN_SERVER }}/sit722-app:${{ github.sha }} \
             --registry-login-server ${{ secrets.ACR_LOGIN_SERVER }} \
             --registry-username ${{ secrets.ACR_USERNAME }} \
