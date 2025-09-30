@@ -8,7 +8,7 @@ on:
 jobs: 
   deploy-prod:
     runs-on: ubuntu-latest
-    steps:
+    steps: 
       - name: Checkout code
         uses: actions/checkout@v3
 
@@ -17,8 +17,13 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Deploy to production
+      - name: Select subscription
+        run: az account set --subscription e9880739-dae9-4c01-8b11-b828ed701da2
+
+      - name: Deploy to production (ACI)
         run: |
+          az account set --subscription e9880739-dae9-4c01-8b11-b828ed701da2
+      
           az container create \
             --resource-group sit722-prod-rg \
             --name sit722-prod-app \
@@ -26,5 +31,11 @@ jobs:
             --registry-login-server ${{ secrets.ACR_LOGIN_SERVER }} \
             --registry-username ${{ secrets.ACR_USERNAME }} \
             --registry-password ${{ secrets.ACR_PASSWORD }} \
-            --dns-name-label sit722-prod \
+            --os-type Linux \
+            --location australiaeast \
+            --cpu 1 --memory 1.5 \
+            --restart-policy Always \
+            --dns-name-label sit722-prod-${{ github.run_id }} \
             --ports 80
+      
+          echo "FQDN: $(az container show -g sit722-prod-rg -n sit722-prod-app --query ipAddress.fqdn -o tsv)"
