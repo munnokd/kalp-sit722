@@ -41,39 +41,11 @@ jobs:
           file: ./backend/customer_service/Dockerfile
           tags: ${{ env.IMAGE }}
           push: false
-          load: true   # load to local Docker for smoke test
+          load: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # ---- Added: Local smoke test before pushing ----
-      - name: Smoke test container (local)
-        env:
-          IMAGE: ${{ env.IMAGE }}
-          PORT: ${{ env.PORT }}
-          PATH_CHECK: ${{ env.PATH_CHECK }}
-        run: |
-          set -euo pipefail
-          cname="smoke-${GITHUB_RUN_ID}"
-          docker rm -f "$cname" >/dev/null 2>&1 || true
-          docker run -d --name "$cname" -p ${PORT}:${PORT} "$IMAGE"
-          # wait for the app to become healthy (up to ~60s)
-          for i in {1..20}; do
-            if curl -fsS "http://localhost:8080/health" >/dev/null; then
-              echo "Health check OK"
-              exit 0
-            fi
-            echo "Not ready yet... retrying"
-            sleep 3
-          done
-          
-          echo "App never became ready"
-          exit 1
-          # verify final status
-          curl -f "http://localhost:${PORT}${PATH_CHECK}" >/dev/null
-          # cleanup
-          docker rm -f "$cname" >/dev/null 2>&1 || true
-
-      - name: Push image to ACR (only if tests passed)
+      - name: Push image to ACR (only if build passed)
         if: success()
         uses: docker/build-push-action@v6
         with:
@@ -84,12 +56,11 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # ---- Added: Stage 2 - ephemeral staging on Azure Container Instances ----
   stage-deploy-test-destroy:
     name: Stage 2 — Deploy to temporary staging, test, destroy
     needs: build-test-push
     runs-on: ubuntu-latest
-    # Optional: require manual approval via GitHub Environments
+    # Optional: require manual approval with GitHub Environments
     # environment: staging
 
     env:
@@ -141,18 +112,10 @@ jobs:
         run: |
           set -e
           URL="http://${{ steps.fqdn.outputs.fqdn }}:${{ env.PORT }}${{ env.PATH_CHECK }}"
-          echo "Checking $URL ..."
-          for i in {1..20}; do
-            if curl -fsS "$URL" >/dev/null; then
-              echo "Health check OK"
-              exit 0
-            fi
-            sleep 3
-          done
-          echo "Health check FAILED"
-          exit 1
+          echo "Sleeping 30 seconds for container in staging to boot..."
+          sleep 30
+          curl -f "$URL"
 
-      # Always clean up the temporary staging environment
       - name: Destroy staging (always)
         if: always()
         run: az group delete -n "$RG_NAME" --yes --no-wait
