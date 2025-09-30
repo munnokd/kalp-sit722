@@ -1,0 +1,39 @@
+name: Deploy to Staging
+
+on:
+  workflow_run:
+    workflows: ["CI Pipeline - Testing & Build"]
+    types:
+      - completed
+ 
+jobs:
+  deploy-staging:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Create staging environment
+        run: |
+          az group create --name sit722-staging-rg --location eastus
+          az container create \
+            --resource-group sit722-staging-rg \
+            --name sit722-staging-app \
+            --image ${{ secrets.ACR_LOGIN_SERVER }}/sit722-app:${{ github.sha }} \
+            --registry-login-server ${{ secrets.ACR_LOGIN_SERVER }} \
+            --registry-username ${{ secrets.ACR_USERNAME }} \
+            --registry-password ${{ secrets.ACR_PASSWORD }} \
+            --dns-name-label sit722-staging-${{ github.run_id }} \
+            --ports 80
+
+      - name: Run acceptance tests
+        run: echo "Placeholder for manual or scripted acceptance testing"
+
+      - name: Destroy staging environment
+        run: az group delete --name sit722-staging-rg --yes --no-wait
