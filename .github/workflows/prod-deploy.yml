@@ -9,9 +9,9 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # Pin to the exact image you built & pushed
-      IMAGE_TAG: "62dee7af781e582520212ba29331aa09e50802c2"
+      IMAGE_TAG: "cf79d00d03aa8429e8740140d46168450e151041"
       # Optional: pin by digest for immutability (use the line with @ below)
-      IMAGE_DIGEST: "sha256:fa1953d348e6cb67bf268928f9b45053ef665a96535e084c589dca7fc5921c37"
+      IMAGE_DIGEST: "sha256:af56d19ad575f442bd03ac129c726a1806ca225cf0b84abb3b9db08a2359777b"
 
       # Infra names (keep consistent!)
       AZ_SUBSCRIPTION_ID: "e9880739-dae9-4c01-8b11-b828ed701da2"
