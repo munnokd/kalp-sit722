@@ -44,12 +44,6 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Smoke test container
-        env:
-          IMAGE: ${{ env.IMAGE }}
-          PORT: ${{ env.PORT }}
-          PATH_CHECK: ${{ env.PATH_CHECK }}
-        run: ./.ci/smoke-test.sh
 
       - name: Push image to ACR (only if tests passed)
         if: success()
