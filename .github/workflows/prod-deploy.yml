@@ -17,6 +17,8 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
+      - name: Select subscription
+        run: az account set --subscription e9880739-dae9-4c01-8b11-b828ed701da2
       - name: Deploy to production
         run: |
           az container create \
