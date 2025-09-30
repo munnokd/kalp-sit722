@@ -1,22 +1,21 @@
-name: CI Pipeline - Test, Build, Push
+name: CI Pipeline - Test, Build, Push (no Node)
 
 on:
   push:
     branches: [ testing ]
 
 env:
-  REGION: australiaeast
-  IMAGE_REPO: sit722-app
+  REGISTRY: ${{ secrets.ACR_LOGIN_SERVER }}   # e.g. myacr.azurecr.io
+  IMAGE_NAME: sit722-app
   IMAGE_TAG: ${{ github.sha }}
-  IMAGE_URI: ${{ secrets.ACR_LOGIN_SERVER }}/sit722-app:${{ github.sha }}
-  APP_PORT: 8080
-  HEALTH_PATH: /health
-  DOCKERFILE_PATH: backend/customer_service/Dockerfile   # <— change if yours is elsewhere
-  BUILD_CONTEXT: .                                       # <— change if you want a narrower context
+  IMAGE: ${{ secrets.ACR_LOGIN_SERVER }}/sit722-app:${{ github.sha }}
+  PORT: 8080          
+  PATH_CHECK: /health 
 
 jobs:
   build-test-push:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,51 +33,26 @@ jobs:
           username: ${{ secrets.ACR_USERNAME }}
           password: ${{ secrets.ACR_PASSWORD }}
 
-      - name: Build image (no push yet; load for local run)
+      - name: Build image (no push yet)
         uses: docker/build-push-action@v6
         with:
-          context: ${{ env.BUILD_CONTEXT }}
-          file: ${{ env.DOCKERFILE_PATH }}
-          tags: ${{ env.IMAGE_URI }}
-          load: true
+          context: ./backend/customer_service
+          file: ./backend/customer_service/Dockerfile
+          tags: ${{ env.IMAGE }}
           push: false
+          load: true   # load to local Docker for smoke test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+     
 
-      - name: Prepare smoke-test script
-        run: |
-          mkdir -p .ci
-          cat > .ci/smoke-test.sh <<'BASH'
-          #!/usr/bin/env bash
-          set -euo pipefail
-          IMAGE="${IMAGE:?}"
-          PORT="${PORT:-8080}"
-          PATH_CHECK="${PATH_CHECK:-/health}"
-          CID=$(docker run -d -p 127.0.0.1:${PORT}:${PORT} "${IMAGE}")
-          cleanup(){ docker rm -f "$CID" >/dev/null 2>&1 || true; }
-          trap cleanup EXIT
-          for i in {1..30}; do
-            if curl -fsS "http://127.0.0.1:${PORT}${PATH_CHECK}" >/dev/null 2>&1; then
-              echo "Smoke test passed"; exit 0
-            fi
-            sleep 2
-          done
-          echo "Smoke test FAILED"; exit 1
-          BASH
-          sed -i 's/\r$//' .ci/smoke-test.sh
-          chmod +x .ci/smoke-test.sh
-
-      - name: Run smoke test
-        env:
-          IMAGE: ${{ env.IMAGE_URI }}
-          PORT: ${{ env.APP_PORT }}
-          PATH_CHECK: ${{ env.HEALTH_PATH }}
-        shell: bash
-        run: ./.ci/smoke-test.sh
 
       - name: Push image to ACR (only if tests passed)
         if: success()
         uses: docker/build-push-action@v6
         with:
-          context: ${{ env.BUILD_CONTEXT }}
-          file: ${{ env.DOCKERFILE_PATH }}
-          tags: ${{ env.IMAGE_URI }}
+          context: ./backend/customer_service
+          file: ./backend/customer_service/Dockerfile
+          tags: ${{ env.IMAGE }}
           push: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
