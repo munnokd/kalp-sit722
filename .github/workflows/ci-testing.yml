@@ -9,8 +9,9 @@ env:
   IMAGE_NAME: sit722-app
   IMAGE_TAG: ${{ github.sha }}
   IMAGE: ${{ secrets.ACR_LOGIN_SERVER }}/sit722-app:${{ github.sha }}
-  PORT: 8080          
-  PATH_CHECK: /health 
+  PORT: 8080
+  PATH_CHECK: /health
+  AZURE_LOCATION: australiaeast               # <- pick your region
 
 jobs:
   build-test-push:
@@ -43,8 +44,30 @@ jobs:
           load: true   # load to local Docker for smoke test
           cache-from: type=gha
           cache-to: type=gha,mode=max
-     
 
+      # ---- Added: Local smoke test before pushing ----
+      - name: Smoke test container (local)
+        env:
+          IMAGE: ${{ env.IMAGE }}
+          PORT: ${{ env.PORT }}
+          PATH_CHECK: ${{ env.PATH_CHECK }}
+        run: |
+          set -euo pipefail
+          cname="smoke-${GITHUB_RUN_ID}"
+          docker rm -f "$cname" >/dev/null 2>&1 || true
+          docker run -d --name "$cname" -p ${PORT}:${PORT} "$IMAGE"
+          # wait for the app to become healthy (up to ~60s)
+          for i in {1..30}; do
+            if curl -fsS "http://localhost:${PORT}${PATH_CHECK}" >/dev/null; then
+              echo "Smoke test passed."
+              break
+            fi
+            sleep 2
+          done
+          # verify final status
+          curl -f "http://localhost:${PORT}${PATH_CHECK}" >/dev/null
+          # cleanup
+          docker rm -f "$cname" >/dev/null 2>&1 || true
 
       - name: Push image to ACR (only if tests passed)
         if: success()
@@ -56,3 +79,76 @@ jobs:
           push: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # ---- Added: Stage 2 - ephemeral staging on Azure Container Instances ----
+  stage-deploy-test-destroy:
+    name: Stage 2 — Deploy to temporary staging, test, destroy
+    needs: build-test-push
+    runs-on: ubuntu-latest
+    # Optional: require manual approval via GitHub Environments
+    # environment: staging
+
+    env:
+      RG_NAME: rg-sit722-stg-${{ github.run_id }}
+      ACI_NAME: sit722-stg-${{ github.run_id }}
+      DNS_LABEL: sit722-${{ github.run_id }}   # must be unique within region
+
+    steps:
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Create resource group (staging)
+        run: az group create -n "$RG_NAME" -l "${{ env.AZURE_LOCATION }}"
+
+      - name: Create ACI (staging) from ACR image
+        run: |
+          az container create \
+            --resource-group "$RG_NAME" \
+            --name "$ACI_NAME" \
+            --image "${{ env.IMAGE }}" \
+            --cpu 1 --memory 1 \
+            --ports ${{ env.PORT }} \
+            --registry-login-server "${{ env.REGISTRY }}" \
+            --registry-username "${{ secrets.ACR_USERNAME }}" \
+            --registry-password "${{ secrets.ACR_PASSWORD }}" \
+            --dns-name-label "$DNS_LABEL" \
+            --environment-variables ASPNETCORE_URLS=http://0.0.0.0:${{ env.PORT }}
+
+      - name: Wait for container to be ready
+        run: |
+          echo "Waiting for ACI to be in 'Running' state..."
+          for i in {1..30}; do
+            STATE=$(az container show -g "$RG_NAME" -n "$ACI_NAME" --query "instanceView.state" -o tsv || true)
+            [ "$STATE" = "Running" ] && break
+            sleep 5
+          done
+          [ "$STATE" = "Running" ] || { echo "Container did not reach Running state"; exit 1; }
+
+      - name: Get staging FQDN
+        id: fqdn
+        run: |
+          FQDN=$(az container show -g "$RG_NAME" -n "$ACI_NAME" --query "ipAddress.fqdn" -o tsv)
+          echo "fqdn=$FQDN" >> $GITHUB_OUTPUT
+          echo "Staging URL: http://$FQDN:${{ env.PORT }}"
+
+      - name: Trivial acceptance test (HTTP health)
+        run: |
+          set -e
+          URL="http://${{ steps.fqdn.outputs.fqdn }}:${{ env.PORT }}${{ env.PATH_CHECK }}"
+          echo "Checking $URL ..."
+          for i in {1..20}; do
+            if curl -fsS "$URL" >/dev/null; then
+              echo "Health check OK"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "Health check FAILED"
+          exit 1
+
+      # Always clean up the temporary staging environment
+      - name: Destroy staging (always)
+        if: always()
+        run: az group delete -n "$RG_NAME" --yes --no-wait
