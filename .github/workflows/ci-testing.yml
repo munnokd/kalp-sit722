@@ -9,8 +9,8 @@ env:
   IMAGE_NAME: sit722-app
   IMAGE_TAG: ${{ github.sha }}
   IMAGE: ${{ secrets.ACR_LOGIN_SERVER }}/sit722-app:${{ github.sha }}
-  PORT: 8080          # change if your app uses a different port
-  PATH_CHECK: /health # change if your app exposes another path
+  PORT: 8080          
+  PATH_CHECK: /health 
 
 jobs:
   build-test-push:
@@ -36,10 +36,13 @@ jobs:
       - name: Build image (no push yet)
         uses: docker/build-push-action@v6
         with:
-          context: ../../backend/customer_service/Dockerfile
-          push: false
+          context: ./backend/customer_service
+          file: ./backend/customer_service/Dockerfile
           tags: ${{ env.IMAGE }}
+          push: false
           load: true   # load to local Docker for smoke test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Smoke test container
         env:
@@ -52,6 +55,9 @@ jobs:
         if: success()
         uses: docker/build-push-action@v6
         with:
-          context: .
-          push: true
+          context: ./backend/customer_service
+          file: ./backend/customer_service/Dockerfile
           tags: ${{ env.IMAGE }}
+          push: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
