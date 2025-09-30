@@ -2,13 +2,24 @@ name: Deploy to Production
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
 
-jobs: 
+jobs:
   deploy-prod:
     runs-on: ubuntu-latest
-    steps: 
+    env:
+      # Pin to the exact image you built & pushed
+      IMAGE_TAG: "62dee7af781e582520212ba29331aa09e50802c2"
+      # Optional: pin by digest for immutability (use the line with @ below)
+      IMAGE_DIGEST: "sha256:fa1953d348e6cb67bf268928f9b45053ef665a96535e084c589dca7fc5921c37"
+
+      # Infra names (keep consistent!)
+      AZ_SUBSCRIPTION_ID: "e9880739-dae9-4c01-8b11-b828ed701da2"
+      PROD_RG: "sit722-prod-rg"
+      ACI_NAME: "sit722-prod-app"  # use one name everywhere
+      ACI_REGION: "australiaeast"
+
+    steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
@@ -18,24 +29,43 @@ jobs:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: Select subscription
-        run: az account set --subscription e9880739-dae9-4c01-8b11-b828ed701da2
+        run: az account set --subscription "${{ env.AZ_SUBSCRIPTION_ID }}"
+
+      # (Optional) Guard: ensure the tag exists in ACR before trying to deploy
+      - name: Verify image tag exists in ACR
+        run: |
+          ACR_NAME="$(echo "${{ secrets.ACR_LOGIN_SERVER }}" | cut -d. -f1)"
+          az acr repository show-tags \
+            --name "$ACR_NAME" \
+            --repository sit722-app \
+            --query "contains(@, '${{ env.IMAGE_TAG }}')" -o tsv | grep -qi true
 
       - name: Deploy to production (ACI)
         run: |
-          az account set --subscription e9880739-dae9-4c01-8b11-b828ed701da2
-      
+          # Delete any existing group with the same name (idempotent redeploys)
+          az container delete -g "${{ env.PROD_RG }}" -n "${{ env.ACI_NAME }}" --yes --only-show-errors || true
+
+          # Use tag (current choice)
+          IMAGE_REF="${{ secrets.ACR_LOGIN_SERVER }}/sit722-app:${{ env.IMAGE_TAG }}"
+
+          # If you prefer digest pinning, use this instead:
+          # IMAGE_REF="${{ secrets.ACR_LOGIN_SERVER }}/sit722-app@${{ env.IMAGE_DIGEST }}"
+
           az container create \
-            --resource-group sit722-rg \
-            --name sit722acr945746056  \
-            --image ${{ secrets.ACR_LOGIN_SERVER }}/sit722-app:${{ github.sha }} \
-            --registry-login-server ${{ secrets.ACR_LOGIN_SERVER }} \
-            --registry-username ${{ secrets.ACR_USERNAME }} \
-            --registry-password ${{ secrets.ACR_PASSWORD }} \
+            --resource-group "${{ env.PROD_RG }}" \
+            --name "${{ env.ACI_NAME }}" \
+            --image "$IMAGE_REF" \
+            --registry-login-server "${{ secrets.ACR_LOGIN_SERVER }}" \
+            --registry-username "${{ secrets.ACR_USERNAME }}" \
+            --registry-password "${{ secrets.ACR_PASSWORD }}" \
             --os-type Linux \
-            --location australiaeast \
+            --location "${{ env.ACI_REGION }}" \
             --cpu 1 --memory 1.5 \
             --restart-policy Always \
-            --dns-name-label sit722-prod-${{ github.run_id }} \
+            --dns-name-label "sit722-prod-${{ github.run_id }}" \
             --ports 80
-      
-          echo "FQDN: $(az container show -g sit722-prod-rg -n sit722-prod-app --query ipAddress.fqdn -o tsv)"
+
+      - name: Show public FQDN
+        run: |
+          FQDN=$(az container show -g "${{ env.PROD_RG }}" -n "${{ env.ACI_NAME }}" --query "ipAddress.fqdn" -o tsv)
+          echo "FQDN: $FQDN"
