@@ -36,7 +36,7 @@ jobs:
       - name: Build image (no push yet)
         uses: docker/build-push-action@v6
         with:
-          context: backend/customer_service/Dockerfile
+          context: ../../backend/customer_service/Dockerfile
           push: false
           tags: ${{ env.IMAGE }}
           load: true   # load to local Docker for smoke test
