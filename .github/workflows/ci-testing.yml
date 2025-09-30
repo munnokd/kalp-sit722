@@ -9,9 +9,8 @@ env:
   IMAGE_NAME: sit722-app
   IMAGE_TAG: ${{ github.sha }}
   IMAGE: ${{ secrets.ACR_LOGIN_SERVER }}/sit722-app:${{ github.sha }}
-  PORT: 8080
-  PATH_CHECK: /health
-  AZURE_LOCATION: australiaeast               # <- pick your region
+  PORT: 8080          
+  PATH_CHECK: /health 
 
 jobs:
   build-test-push:
@@ -41,11 +40,13 @@ jobs:
           file: ./backend/customer_service/Dockerfile
           tags: ${{ env.IMAGE }}
           push: false
-          load: true
+          load: true   # load to local Docker for smoke test
           cache-from: type=gha
           cache-to: type=gha,mode=max
+     
 
-      - name: Push image to ACR (only if build passed)
+
+      - name: Push image to ACR (only if tests passed)
         if: success()
         uses: docker/build-push-action@v6
         with:
@@ -55,67 +56,3 @@ jobs:
           push: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-  stage-deploy-test-destroy:
-    name: Stage 2 — Deploy to temporary staging, test, destroy
-    needs: build-test-push
-    runs-on: ubuntu-latest
-    # Optional: require manual approval with GitHub Environments
-    # environment: staging
-
-    env:
-      RG_NAME: rg-sit722-stg-${{ github.run_id }}
-      ACI_NAME: sit722-stg-${{ github.run_id }}
-      DNS_LABEL: sit722-${{ github.run_id }}   # must be unique within region
-
-    steps:
-      - name: Azure login
-        uses: azure/login@v2
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
-
-      - name: Create resource group (staging)
-        run: az group create -n "$RG_NAME" -l "${{ env.AZURE_LOCATION }}"
-
-      - name: Create ACI (staging) from ACR image
-        run: |
-          az container create \
-            --resource-group "$RG_NAME" \
-            --name "$ACI_NAME" \
-            --image "${{ env.IMAGE }}" \
-            --cpu 1 --memory 1 \
-            --ports ${{ env.PORT }} \
-            --registry-login-server "${{ env.REGISTRY }}" \
-            --registry-username "${{ secrets.ACR_USERNAME }}" \
-            --registry-password "${{ secrets.ACR_PASSWORD }}" \
-            --dns-name-label "$DNS_LABEL" \
-            --environment-variables ASPNETCORE_URLS=http://0.0.0.0:${{ env.PORT }}
-
-      - name: Wait for container to be ready
-        run: |
-          echo "Waiting for ACI to be in 'Running' state..."
-          for i in {1..30}; do
-            STATE=$(az container show -g "$RG_NAME" -n "$ACI_NAME" --query "instanceView.state" -o tsv || true)
-            [ "$STATE" = "Running" ] && break
-            sleep 5
-          done
-          [ "$STATE" = "Running" ] || { echo "Container did not reach Running state"; exit 1; }
-
-      - name: Get staging FQDN
-        id: fqdn
-        run: |
-          FQDN=$(az container show -g "$RG_NAME" -n "$ACI_NAME" --query "ipAddress.fqdn" -o tsv)
-          echo "fqdn=$FQDN" >> $GITHUB_OUTPUT
-          echo "Staging URL: http://$FQDN:${{ env.PORT }}"
-
-      - name: Trivial acceptance test (HTTP health)
-        run: |
-          set -e
-          URL="http://${{ steps.fqdn.outputs.fqdn }}:${{ env.PORT }}${{ env.PATH_CHECK }}"
-          echo "Sleeping 30 seconds for container in staging to boot..."
-          sleep 30
-          curl -f "$URL"
-
-      - name: Destroy staging (always)
-        if: always()
-        run: az group delete -n "$RG_NAME" --yes --no-wait
