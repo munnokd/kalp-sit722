@@ -1,36 +1,57 @@
-name: CI Pipeline - Testing & Build
+name: CI Pipeline - Test, Build, Push (no Node)
 
 on:
   push:
-    branches:
-      - testing
+    branches: [ testing ]
+
+env:
+  REGISTRY: ${{ secrets.ACR_LOGIN_SERVER }}   # e.g. myacr.azurecr.io
+  IMAGE_NAME: sit722-app
+  IMAGE_TAG: ${{ github.sha }}
+  IMAGE: ${{ secrets.ACR_LOGIN_SERVER }}/sit722-app:${{ github.sha }}
+  PORT: 8080          # change if your app uses a different port
+  PATH_CHECK: /health # change if your app exposes another path
 
 jobs:
-  build-and-test:
+  build-test-push:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v3
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to ACR
+        uses: docker/login-action@v3
         with:
-          node-version: '18'
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Run tests
-        run: npm test
-
-      - name: Log in to Azure Container Registry
-        uses: azure/docker-login@v1
-        with:
-          login-server: ${{ secrets.ACR_LOGIN_SERVER }}
+          registry: ${{ secrets.ACR_LOGIN_SERVER }}
           username: ${{ secrets.ACR_USERNAME }}
           password: ${{ secrets.ACR_PASSWORD }}
 
-      - name: Build and push Docker image
-        run: |
-          docker build -t ${{ secrets.ACR_LOGIN_SERVER }}/sit722-app:${{ github.sha }} .
-          docker push ${{ secrets.ACR_LOGIN_SERVER }}/sit722-app:${{ github.sha }}
+      - name: Build image (no push yet)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: ${{ env.IMAGE }}
+          load: true   # load to local Docker for smoke test
+
+      - name: Smoke test container
+        env:
+          IMAGE: ${{ env.IMAGE }}
+          PORT: ${{ env.PORT }}
+          PATH_CHECK: ${{ env.PATH_CHECK }}
+        run: ./.ci/smoke-test.sh
+
+      - name: Push image to ACR (only if tests passed)
+        if: success()
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ env.IMAGE }}
